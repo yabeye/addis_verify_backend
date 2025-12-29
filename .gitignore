@@ -1,0 +1,43 @@
+# --- Binaries & Executables ---
+# Air builds to tmp/ by default in your config
+tmp/
+bin/
+out/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# --- Environment & Secrets ---
+.env
+.env.*
+!.env.example
+*.secret
+
+# --- Go Specific ---
+# If you run go test ./... -coverprofile=coverage.out
+*.out
+*.prof
+*.test
+# Avoid committing large binary test data
+testdata/*.bin
+
+# --- Tooling & IDEs ---
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+# Go version manager file
+.go-version
+
+# --- Swagger / Swaggo ---
+# Some teams commit these so they show up on GitHub, 
+# but they are auto-generated. If you want a clean repo, ignore them.
+docs/
+
+# --- Database / SQLC ---
+# Do NOT ignore your generated SQLC code (internal/db/*.go)
+# But DO ignore any local data folders if you run DBs in volumes
+postgres-data/

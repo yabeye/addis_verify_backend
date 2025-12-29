@@ -1,0 +1,50 @@
+#:schema https://json.schemastore.org/any.json
+
+root = "."
+testdata_dir = "testdata"
+tmp_dir = "tmp"
+
+[build]
+  # 1. Generate Swagger docs before building
+  pre_cmd = ["swag init -g cmd/api/main.go --parseDependency --parseInternal --dir ./"]
+  
+  # 2. Build the specific folder where your main.go lives
+  # Note: I'm naming the output 'main' to keep it simple
+  cmd = "go build -o ./tmp/main ./cmd/api"
+  
+  # 3. Tell Air to run the binary we just built
+  bin = "./tmp/main"
+  
+  # 4. Use an empty entrypoint to let Air use the 'bin' path
+  entrypoint = []
+  
+  # 5. Exclude internal/database to avoid loops when sqlc runs
+  exclude_dir = ["assets", "tmp", "vendor", "testdata", "sql", "internal/database", "docs"]
+  
+  delay = 1000
+  stop_on_error = true
+  send_interrupt = true
+
+[color]
+  app = ""
+  build = "yellow"
+  main = "magenta"
+  runner = "green"
+  watcher = "cyan"
+
+[log]
+  main_only = false
+  silent = false
+  time = false
+
+[misc]
+  clean_on_exit = false
+
+[proxy]
+  app_port = 0
+  enabled = false
+  proxy_port = 0
+
+[screen]
+  clear_on_rebuild = false
+  keep_scroll = true

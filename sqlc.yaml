@@ -1,0 +1,13 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    queries: "sql/query.sql"
+    # sqlc correctly reads Goose migrations from a directory
+    schema: "sql/migrations"
+    gen:
+      go:
+        package: "repo"
+        out: "internal/database"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_interface: true
