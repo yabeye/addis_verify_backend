@@ -6,12 +6,19 @@ package repo
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type Querier interface {
+	GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, error)
 	GetAccountByPhone(ctx context.Context, phone string) (Account, error)
+	// This is for administrative or system changes.
+	// It does NOT touch token_valid_from, so the user stays logged in.
 	UpdateAccountStatus(ctx context.Context, arg UpdateAccountStatusParams) error
-	//****ACCOUNTS****
+	//**** ACCOUNTS ****
+	// This is used ONLY during the VerifyOTP flow.
+	// It moves the 'token_valid_from' forward to invalidate old sessions.
 	UpsertAccount(ctx context.Context, phone string) (Account, error)
 }
 

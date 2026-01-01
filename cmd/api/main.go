@@ -44,6 +44,7 @@ func main() {
 		FallbackURL: env.GetString("DEFAULT_FALLBACK_URL", "https://go.dev/"),
 		RedisAddr:   env.GetString("REDIS_ADDR", "localhost:6379"),
 		JWTSecret:   env.GetString("JWT_SECRET", ""),
+		HashPepper:  env.GetString("HASH_PEPPER", "default-dev-pepper-do-not-use-in-prod"),
 	}
 
 	// 4. Database Connection

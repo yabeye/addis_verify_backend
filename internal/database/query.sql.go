@@ -11,9 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getAccountByID = `-- name: GetAccountByID :one
+SELECT id, phone, status, token_valid_from, created_at, updated_at FROM accounts WHERE id = $1 LIMIT 1
+`
+
+func (q *Queries) GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, error) {
+	row := q.db.QueryRow(ctx, getAccountByID, id)
+	var i Account
+	err := row.Scan(
+		&i.ID,
+		&i.Phone,
+		&i.Status,
+		&i.TokenValidFrom,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAccountByPhone = `-- name: GetAccountByPhone :one
-SELECT id, phone, status, token_valid_from, created_at, updated_at FROM accounts
-WHERE phone = $1 LIMIT 1
+SELECT id, phone, status, token_valid_from, created_at, updated_at FROM accounts WHERE phone = $1 LIMIT 1
 `
 
 func (q *Queries) GetAccountByPhone(ctx context.Context, phone string) (Account, error) {
@@ -41,6 +58,8 @@ type UpdateAccountStatusParams struct {
 	Status AccountStatus `json:"status"`
 }
 
+// This is for administrative or system changes.
+// It does NOT touch token_valid_from, so the user stays logged in.
 func (q *Queries) UpdateAccountStatus(ctx context.Context, arg UpdateAccountStatusParams) error {
 	_, err := q.db.Exec(ctx, updateAccountStatus, arg.ID, arg.Status)
 	return err
@@ -48,15 +67,18 @@ func (q *Queries) UpdateAccountStatus(ctx context.Context, arg UpdateAccountStat
 
 const upsertAccount = `-- name: UpsertAccount :one
 
-
-INSERT INTO accounts (phone)
-VALUES ($1)
+INSERT INTO accounts (phone, token_valid_from)
+VALUES ($1, NOW())
 ON CONFLICT (phone) DO UPDATE 
-SET updated_at = CURRENT_TIMESTAMP
+SET 
+    token_valid_from = EXCLUDED.token_valid_from,
+    updated_at = CURRENT_TIMESTAMP
 RETURNING id, phone, status, token_valid_from, created_at, updated_at
 `
 
-// ****ACCOUNTS****
+// **** ACCOUNTS ****
+// This is used ONLY during the VerifyOTP flow.
+// It moves the 'token_valid_from' forward to invalidate old sessions.
 func (q *Queries) UpsertAccount(ctx context.Context, phone string) (Account, error) {
 	row := q.db.QueryRow(ctx, upsertAccount, phone)
 	var i Account

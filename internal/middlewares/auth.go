@@ -3,43 +3,50 @@ package middlewares
 import (
 	"context"
 	"net/http"
-	"strings"
 
-	"github.com/yabeye/addis_verify_backend/pkg/auth"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/yabeye/addis_verify_backend/internal/account" // Import your service interface
+	"github.com/yabeye/addis_verify_backend/pkg/auth"         // Import your token manager
 	"github.com/yabeye/addis_verify_backend/pkg/json"
 )
 
-// Use a custom type for context keys to avoid collisions
-type contextKey string
-
-const UserIDKey contextKey = "user_id"
-
-func Auth(tm auth.TokenManager) func(http.Handler) http.Handler {
+// AuthMiddleware now takes its dependencies as arguments
+func AuthMiddleware(tokenManager auth.TokenManager, svc account.Service) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 1. Get the Authorization header
+			// 1. Get token from Authorization header
 			authHeader := r.Header.Get("Authorization")
-			if authHeader == "" {
-				json.WriteError(w, http.StatusUnauthorized, "Missing authorization header")
+			if authHeader == "" || len(authHeader) < 8 || authHeader[:7] != "Bearer " {
+				json.WriteError(w, http.StatusUnauthorized, "Missing or invalid authorization header")
 				return
 			}
 
-			// 2. Parse "Bearer <token>"
-			parts := strings.Split(authHeader, " ")
-			if len(parts) != 2 || parts[0] != "Bearer" {
-				json.WriteError(w, http.StatusUnauthorized, "Invalid authorization format")
-				return
-			}
+			tokenString := authHeader[7:]
 
-			// 3. Validate Token
-			userID, err := tm.ValidateToken(parts[1])
+			// 2. Verify Token
+			claims, err := tokenManager.VerifyToken(tokenString)
 			if err != nil {
-				json.WriteError(w, http.StatusUnauthorized, "Invalid or expired token")
+				json.WriteError(w, http.StatusUnauthorized, "Session expired or invalid token")
 				return
 			}
 
-			// 4. Inject UserID into context and proceed
-			ctx := context.WithValue(r.Context(), UserIDKey, userID)
+			if claims.Type != "access" {
+				json.WriteError(w, http.StatusForbidden, "Refresh tokens cannot be used for this endpoint")
+				return
+			}
+
+			// 3. Single Session Check
+			var dbID pgtype.UUID
+			dbID.Scan(claims.AccountID)
+
+			acc, err := svc.GetAccountByID(r.Context(), dbID)
+			if err != nil || claims.IssuedAt.Time.Unix() < acc.TokenValidFrom.Time.Unix() {
+				json.WriteError(w, http.StatusUnauthorized, "Session invalidated by a newer login")
+				return
+			}
+
+			// 4. Success: Set context
+			ctx := context.WithValue(r.Context(), "user_id", claims.AccountID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

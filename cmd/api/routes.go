@@ -14,25 +14,30 @@ import (
 func MountRoutes(app *application, accountHandler account.Handler) http.Handler {
 	r := chi.NewRouter()
 
-	// 1. AUTHENTICATION ENDPOINTS
-	r.Route("/accounts/auth", func(r chi.Router) {
+	r.Route("/accounts", func(r chi.Router) {
 
-		// Specific Security for Identity Auth:
-		// We override the global 1MB limit to 10KB here to prevent
-		// "JSON Bomb" attacks on login/signup endpoints.
-		r.Use(middlewares.LimitRequestSize(10 * 1024))
+		// --- PUBLIC AUTH ROUTES ---
+		r.Group(func(r chi.Router) {
+			// Security: Limit request size to 10KB for auth payloads
+			r.Use(middlewares.LimitRequestSize(10 * 1024))
+			// Anti-Brute Force: 5 attempts per minute
+			r.Use(middlewares.RateLimit(5, 1*time.Minute, "Too many attempts. Try again in a minute."))
 
-		// Stricter rate limiting for Auth (5 req/min) to prevent brute force
-		// on phone numbers.
-		r.Use(middlewares.RateLimit(5, 1*time.Minute, "Too many login/signup attempts. Try again in a minute."))
+			r.Post("/auth/send-otp", accountHandler.SendOTP)
+			r.Post("/auth/verify-otp", accountHandler.VerifyOTP)
+			r.Post("/auth/refresh", accountHandler.RefreshToken)
+		})
 
-		// r.Use(middlewares.Auth(app.auth))
-		r.Post("/send-otp", accountHandler.SendOTP)
-		r.Post("/verify-otp", accountHandler.VerifyOTP)
+		// --- PROTECTED ROUTES ---
+		r.Group(func(r chi.Router) {
+			// Apply the Auth Middleware to this group only
+			r.Use(middlewares.AuthMiddleware(app.auth, app.accountSvc))
+
+			r.Get("/me", accountHandler.GetMe)
+			r.Post("/auth/logout", accountHandler.Logout)
+			// You can add more protected routes here, like /profile-update
+		})
 	})
-
-	// Future groups (e.g. /identity, /verification) would be mounted here...
-	// r.Use(middlewares.Auth(app.auth))
 
 	return r
 }

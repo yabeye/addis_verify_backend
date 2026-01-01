@@ -6,31 +6,45 @@ import (
 	repo "github.com/yabeye/addis_verify_backend/internal/database"
 )
 
+// sendOTPRequest represents the payload for requesting a new OTP
+// @Name SendOTPRequest
 type sendOTPRequest struct {
+	// Phone must be in E.164 format and include the '+' prefix
 	Phone string `json:"phone" validate:"required,e164,startswith=+" example:"+251911223344"`
 }
 
+// sendOTPResponse represents the success message after an OTP is triggered
+// @Name SendOTPResponse
 type sendOTPResponse struct {
 	Message string `json:"message" example:"OTP sent successfully"`
 }
 
+// verifyOTPRequest represents the payload to exchange an OTP for a JWT
+// @Name VerifyOTPRequest
 type verifyOTPRequest struct {
 	Phone string `json:"phone" validate:"required,e164,startswith=+" example:"+251911223344"`
-	OTP   string `json:"otp" validate:"required,len=6,numeric" example:"123456"`
+	// OTP must be exactly 6 digits
+	OTP string `json:"otp" validate:"required,len=6,numeric" example:"123456"`
 }
 
-type verifyOTPResponse struct {
-	Message string     `json:"message" example:"OTP verified successfully"`
-	Token   string     `json:"token" example:"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."`
-	Account accountDTO `json:"account"`
+// authSuccessResponse contains the authentication token and user profile
+// @Name AuthSuccessResponse
+type authSuccessResponse struct {
+	Message      string     `json:"message" example:"OTP verified successfully"`
+	AccessToken  string     `json:"access_token" example:"eyJhbGciOiJIUzI1Ni..."`
+	RefreshToken string     `json:"refresh_token" example:"eyJhbGciOiJIUzI1Ni..."`
+	Account      accountDTO `json:"account"`
 }
 
+// accountDTO represents the public-facing account profile
+// @Name AccountDTO
 type accountDTO struct {
-	ID        string `json:"id"`
-	Phone     string `json:"phone"`
-	Status    string `json:"status"`
-	UpdatedAt string `json:"updated_at"`
-	CreatedAt string `json:"created_at"`
+	ID             string    `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Phone          string    `json:"phone" example:"+251911223344"`
+	Status         string    `json:"status" example:"active"`
+	TokenValidFrom time.Time `json:"token_valid_from" example:"2023-10-27T10:00:00Z"` // Changed to time.Time
+	UpdatedAt      string    `json:"updated_at" example:"2023-10-27T10:00:00Z"`
+	CreatedAt      string    `json:"created_at" example:"2023-10-27T10:00:00Z"`
 }
 
 // MapAccountRow translates the database record into a clean API response

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-playground/validator/v10"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
 	"github.com/yabeye/addis_verify_backend/pkg/auth"
 	"github.com/yabeye/addis_verify_backend/pkg/constants"
@@ -26,49 +27,41 @@ type Cache interface {
 }
 
 type handler struct {
-	service   Service
-	logger    *slog.Logger
-	cache     Cache
-	validate  *validator.Validate
-	genOTP    func() (string, error)
-	messenger messenger.Provider
-	auth      auth.TokenManager
+	service    Service
+	logger     *slog.Logger
+	cache      Cache
+	validate   *validator.Validate
+	genOTP     func() (string, error)
+	messenger  messenger.Provider
+	auth       auth.TokenManager
+	hashPepper string
 }
 
 type Handler interface {
 	SendOTP(w http.ResponseWriter, r *http.Request)
 	VerifyOTP(w http.ResponseWriter, r *http.Request)
+	RefreshToken(w http.ResponseWriter, r *http.Request)
+	GetMe(w http.ResponseWriter, r *http.Request)
+	Logout(w http.ResponseWriter, r *http.Request)
 }
 
 // NewHandler creates a new account handler with dependencies
 func NewHandler(service Service, logger *slog.Logger, cache Cache, messenger messenger.Provider,
 	tokenManager auth.TokenManager,
+	hashPepper string,
 ) Handler {
 	return &handler{
-		service:   service,
-		logger:    logger,
-		cache:     cache,
-		validate:  validator.New(),
-		genOTP:    random.GenerateOTP,
-		messenger: messenger,
-		auth:      tokenManager,
+		service:    service,
+		logger:     logger,
+		cache:      cache,
+		validate:   validator.New(),
+		genOTP:     random.GenerateOTP,
+		messenger:  messenger,
+		auth:       tokenManager,
+		hashPepper: hashPepper,
 	}
 }
 
-// SendOTP godoc
-// @Summary      Send OTP to phone
-// @Description  Generates a 6-digit OTP, hashes it, stores it in Redis with a 1-minute rate limit lock, and sends it via SMS.
-// @Tags         accounts
-// @Accept       json
-// @Produce      json
-// @Param        request  body      sendOTPRequest  true  "Phone number in E.164 format (must start with +)"
-// @Success      200      {object}  sendOTPResponse
-// @Failure      400      {object}  map[string]string "Invalid JSON"
-// @Failure      422      {object}  map[string]string "Validation Failed: Invalid phone format or missing prefix"
-// @Failure      429      {object}  map[string]string "Rate limit exceeded: Try again in 1 minute"
-// @Failure      503      {object}  map[string]string "Service Unavailable: SMS provider or Redis failure"
-// @Failure      500      {object}  map[string]string "Internal Server Error"
-// @Router       /api/v1/accounts/auth/send-otp [post]
 func (h *handler) SendOTP(w http.ResponseWriter, r *http.Request) {
 	var req sendOTPRequest
 
@@ -105,12 +98,13 @@ func (h *handler) SendOTP(w http.ResponseWriter, r *http.Request) {
 	otp, err := h.genOTP()
 	if err != nil {
 		h.logger.Error("otp generation failed", "error", err)
-		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternal)
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
 		return
 	}
 
 	// Hash the OTP before saving to Redis
-	hash := sha256.Sum256([]byte(otp))
+	combined := req.Phone + otp + h.hashPepper
+	hash := sha256.Sum256([]byte(combined))
 	otpHash := fmt.Sprintf("%x", hash)
 
 	// 5. Store in Cache (Atomic Pipeline)
@@ -147,72 +141,224 @@ func (h *handler) SendOTP(w http.ResponseWriter, r *http.Request) {
 
 // VerifyOTP godoc
 // @Summary      Verify OTP and Login
-// @Description  Verifies the OTP hash from Redis. If successful, creates/updates the account in the database and returns a signed JWT.
+// @Description  Exchanges a 6-digit OTP for an Access and Refresh token pair.
 // @Tags         accounts
 // @Accept       json
 // @Produce      json
-// @Param        request  body      verifyOTPRequest  true  "Phone (+E.164) and 6-digit numeric OTP"
-// @Success      200      {object}  verifyOTPResponse
-// @Failure      400      {object}  map[string]string "Invalid JSON"
-// @Failure      401      {object}  map[string]string "Unauthorized: Invalid or expired OTP"
-// @Failure      422      {object}  map[string]string "Validation Failed: Non-numeric OTP or malformed phone"
-// @Failure      500      {object}  map[string]string "Internal Server Error"
-// @Router       /api/v1/accounts/auth/verify-otp [post]
+// @Param        request  body      verifyOTPRequest  true  "OTP Verification Payload"
+// @Success      200      {object}  authSuccessResponse
+// @Router       /api/v1/accounts/auth/verify [post]
 func (h *handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var req verifyOTPRequest
+
+	// 1. Decode and Validate Request
+	if err := json.Decode(r, &req); err != nil {
+		json.WriteError(w, http.StatusBadRequest, "Invalid request payload")
+		return
+	}
+	if err := h.validate.Struct(req); err != nil {
+		json.WriteError(w, http.StatusBadRequest, "Validation failed: "+err.Error())
+		return
+	}
+
+	// 2. Retrieve the hashed OTP from Redis
+	otpKey := "otp:" + req.Phone
+	storedHash, err := h.cache.Get(ctx, otpKey).Result()
+	if err != nil {
+		h.logger.Warn("OTP expired or not found", "phone", req.Phone)
+		json.WriteError(w, http.StatusUnauthorized, constants.ErrInvalidOTP)
+		return
+	}
+
+	// 3. Verify Hash (OTP + Phone + Server Pepper)
+	// This protects against attackers who might see the OTP in transit or access Redis
+	combined := req.Phone + req.OTP + h.hashPepper
+	inputHash := sha256.Sum256([]byte(combined))
+	if fmt.Sprintf("%x", inputHash) != storedHash {
+		h.logger.Warn("Invalid OTP attempt", "phone", req.Phone)
+		json.WriteError(w, http.StatusUnauthorized, constants.ErrInvalidOTP)
+		return
+	}
+
+	// 4. Update Database (Atomic Login)
+	// This updates 'token_valid_from' to NOW(), invalidating all previous tokens
+	dbAccount, err := h.service.UpsertByPhone(ctx, req.Phone)
+	if err != nil {
+		h.logger.Error("failed to upsert account", "error", err)
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 5. Generate Token Pair (Access + Refresh)
+	// We pass dbAccount.TokenValidFrom.Time so the JWT 'iat' matches the DB exactly
+	tokenPair, err := h.auth.GenerateTokenPair(dbAccount.ID.String(), dbAccount.TokenValidFrom.Time)
+	if err != nil {
+		h.logger.Error("failed to generate tokens", "error", err)
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 6. Cleanup Redis
+	h.cache.Del(ctx, otpKey)
+
+	// 7. Success Response
+	h.logger.Info("user logged in successfully", "account_id", dbAccount.ID)
+	json.Write(w, http.StatusOK, authSuccessResponse{
+		Message:      "OTP verified successfully",
+		AccessToken:  tokenPair.AccessToken,
+		RefreshToken: tokenPair.RefreshToken,
+		Account:      MapAccountRow(dbAccount),
+	})
+}
+
+// RefreshToken godoc
+// @Summary      Refresh Access Token
+// @Description  Rotates the session and provides new tokens. Validates that the refresh token is not older than the last login.
+// @Tags         accounts
+// @Accept       json
+// @Produce      json
+// @Param        request  body      object  true  "Refresh Token JSON"
+// @Success      200      {object}  authSuccessResponse
+// @Router       /api/v1/accounts/auth/refresh [post]
+func (h *handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	// 1. Define the input structure
+	var req struct {
+		RefreshToken string `json:"refresh_token" validate:"required"`
+	}
+
 	if err := json.Decode(r, &req); err != nil {
 		json.WriteError(w, http.StatusBadRequest, constants.ErrInvalidJSON)
 		return
 	}
 
-	// 1. Validate the DTO
-	if err := h.validate.Struct(req); err != nil {
-		json.WriteError(w, http.StatusUnprocessableEntity, constants.ErrInvalidPhoneOrCode)
-		return
-	}
-
-	ctx := r.Context()
-	otpKey := fmt.Sprintf("otp:%s", req.Phone)
-
-	// 2. Fetch Hash from Redis
-	storedHash, err := h.cache.Get(ctx, otpKey).Result()
-	if err == redis.Nil {
-		json.WriteError(w, http.StatusUnauthorized, constants.ErrInvalidOTP)
-		return
-	} else if err != nil {
-		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternal)
-		return
-	}
-
-	// 3. Verify Hash
-	inputHash := sha256.Sum256([]byte(req.OTP))
-	if fmt.Sprintf("%x", inputHash) != storedHash {
-		json.WriteError(w, http.StatusUnauthorized, constants.ErrInvalidOTP)
-		return
-	}
-
-	// 4. Success - Clear OTP and update DB
-	h.cache.Del(ctx, otpKey)
-	dbAccount, err := h.service.UpsertByPhone(ctx, req.Phone)
+	// 2. Verify the Refresh Token (Checks signature and expiry)
+	claims, err := h.auth.VerifyToken(req.RefreshToken)
 	if err != nil {
-		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternal)
+		json.WriteError(w, http.StatusUnauthorized, constants.ErrInvalidOrExpiredToken)
 		return
 	}
 
-	// 5. Generate a real JWT
-	token, err := h.auth.GenerateToken(dbAccount.ID.String())
+	// 3. Security Check: Ensure they aren't trying to use an Access Token to refresh
+	if claims.Type != "refresh" {
+		json.WriteError(w, http.StatusForbidden, constants.ErrInvalidOrExpiredToken)
+		return
+	}
+
+	// 4. Convert string ID from token back to pgtype.UUID
+	var dbID pgtype.UUID
+	if err := dbID.Scan(claims.AccountID); err != nil {
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 5. Fetch Account and check if this token is still valid
+	acc, err := h.service.GetAccountByID(r.Context(), dbID)
 	if err != nil {
-		h.logger.Error("failed to generate token", "error", err)
-		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternal)
+		json.WriteError(w, http.StatusUnauthorized, constants.ErrAccountNotFound)
 		return
 	}
 
-	// 6. Build final response
-	res := verifyOTPResponse{
-		Message: constants.MsgOTPVerified,
-		Token:   token,
-		Account: MapAccountRow(dbAccount),
+	// Compare JWT IssuedAt with DB ValidFrom (Convert both to Unix for easy comparison)
+	if claims.IssuedAt.Time.Unix() < acc.TokenValidFrom.Time.Unix() {
+		// "Session invalidated by a newer login"
+		json.WriteError(w, http.StatusUnauthorized, constants.ErrInvalidOrExpiredToken)
+		return
 	}
 
-	json.Write(w, http.StatusOK, res)
+	// 6. ROTATE: Update token_valid_from in DB to NOW()
+	// This makes the CURRENT refresh token unusable for the NEXT request
+	newAcc, err := h.service.UpsertByPhone(r.Context(), acc.Phone)
+	if err != nil {
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 7. Generate NEW pair
+	pair, err := h.auth.GenerateTokenPair(newAcc.ID.String(), newAcc.TokenValidFrom.Time)
+	if err != nil {
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 8. Success Response
+	json.Write(w, http.StatusOK, authSuccessResponse{
+		Message:      "Tokens rotated successfully",
+		AccessToken:  pair.AccessToken,
+		RefreshToken: pair.RefreshToken,
+		Account:      MapAccountRow(newAcc),
+	})
+}
+
+// GetMe godoc
+// @Summary      Get Current User
+// @Description  Returns the profile of the currently authenticated user
+// @Tags         accounts
+// @Security     BearerAuth
+// @Success      200  {object}  accountDTO
+// @Router       /api/v1/accounts/me [get]
+func (h *handler) GetMe(w http.ResponseWriter, r *http.Request) {
+	// 1. Get the ID stored in the context by the middleware
+	userIDStr, ok := r.Context().Value("user_id").(string)
+	if !ok {
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	var dbID pgtype.UUID
+	dbID.Scan(userIDStr)
+
+	// 2. Fetch fresh data from DB
+	acc, err := h.service.GetAccountByID(r.Context(), dbID)
+	if err != nil {
+		json.WriteError(w, http.StatusNotFound, constants.ErrAccountNotFound)
+		return
+	}
+
+	// 3. Return mapped DTO
+	json.Write(w, http.StatusOK, MapAccountRow(acc))
+}
+
+// Logout godoc
+// @Summary      Logout User
+// @Description  Invalidates all active sessions for the user by rotating the token_valid_from timestamp.
+// @Tags         accounts
+// @Security     BearerAuth
+// @Success      200  {object}  map[string]string
+// @Router       /api/v1/accounts/auth/logout [post]
+func (h *handler) Logout(w http.ResponseWriter, r *http.Request) {
+	// 1. Get the ID stored in the context by the middleware
+	userIDStr, ok := r.Context().Value("user_id").(string)
+	if !ok {
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 2. Convert string ID back to pgtype.UUID
+	var dbID pgtype.UUID
+	if err := dbID.Scan(userIDStr); err != nil {
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 3. Fetch current account to get the phone number
+	acc, err := h.service.GetAccountByID(r.Context(), dbID)
+	if err != nil {
+		json.WriteError(w, http.StatusNotFound, constants.ErrAccountNotFound)
+		return
+	}
+
+	// 4. ROTATE: Update token_valid_from to NOW()
+	// This effectively "kills" all existing Access and Refresh tokens
+	_, err = h.service.UpsertByPhone(r.Context(), acc.Phone)
+	if err != nil {
+		h.logger.Error("failed to rotate session for logout", "error", err)
+		json.WriteError(w, http.StatusInternalServerError, constants.ErrInternalServerError)
+		return
+	}
+
+	// 5. Success
+	json.Write(w, http.StatusOK, map[string]string{
+		"message": "Logged out successfully. All sessions invalidated.",
+	})
 }

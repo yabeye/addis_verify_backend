@@ -28,15 +28,17 @@ type config struct {
 	FallbackURL string
 	RedisAddr   string
 	JWTSecret   string
+	HashPepper  string
 }
 
 type application struct {
-	config    config
-	db        *pgxpool.Pool
-	cache     *redis.Client
-	logger    *slog.Logger
-	messenger messenger.Provider
-	auth      auth.TokenManager
+	config     config
+	db         *pgxpool.Pool
+	cache      *redis.Client
+	logger     *slog.Logger
+	messenger  messenger.Provider
+	auth       auth.TokenManager
+	accountSvc account.Service
 }
 
 func (app *application) run(handler http.Handler) error {
@@ -59,7 +61,9 @@ func (app *application) run(handler http.Handler) error {
 // @Router       /health [get]
 func (app *application) healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Write([]byte(`{"status": "available", "message": "API is live 🚀"}`))
+
+	now := time.Now()
+	w.Write([]byte(`{"status": "available", "message": "API is live 🚀", "serverTimeStamp": "` + now.Format(time.RFC3339) + `"}`))
 }
 
 func (app *application) mount() http.Handler {
@@ -100,12 +104,15 @@ func (app *application) mount() http.Handler {
 	// ALL APIS //
 	queries := repo.New(app.db)
 
-	accountSvc := account.New(queries)
+	// accountSvc := account.New(queries)
+	app.accountSvc = account.New(queries)
 	accountHandler := account.NewHandler(
-		accountSvc, app.logger.With("handler", "accounts"), app.cache,
-
+		app.accountSvc,
+		app.logger.With("handler", "accounts"),
+		app.cache,
 		app.messenger,
 		app.auth,
+		app.config.HashPepper,
 	)
 
 	r.Route("/api/v1", func(r chi.Router) {

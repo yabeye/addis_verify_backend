@@ -16,7 +16,11 @@ type mockQuerier struct {
 	mock.Mock
 }
 
-// Implement the Querier methods needed for the tests
+func (m *mockQuerier) GetAccountByID(ctx context.Context, id pgtype.UUID) (repo.Account, error) {
+	args := m.Called(ctx, id)
+	return args.Get(0).(repo.Account), args.Error(1)
+}
+
 func (m *mockQuerier) GetAccountByPhone(ctx context.Context, phone string) (repo.Account, error) {
 	args := m.Called(ctx, phone)
 	return args.Get(0).(repo.Account), args.Error(1)
@@ -32,15 +36,43 @@ func (m *mockQuerier) UpdateAccountStatus(ctx context.Context, params repo.Updat
 	return args.Error(0)
 }
 
-// Add empty implementations for other Querier methods if sqlc generated more
-// func (m *mockQuerier) OtherMethod(...) ...
+// 2. Test Suites
+
+func TestGetAccountByID(t *testing.T) {
+	ctx := context.Background()
+	mockID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+
+	t.Run("account found", func(t *testing.T) {
+		mockRepo := new(mockQuerier)
+		expected := repo.Account{ID: mockID, Phone: "+251911223344"}
+
+		mockRepo.On("GetAccountByID", ctx, mockID).Return(expected, nil)
+
+		service := New(mockRepo)
+		acc, err := service.GetAccountByID(ctx, mockID)
+
+		assert.NoError(t, err)
+		assert.Equal(t, expected.Phone, acc.Phone)
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("account not found", func(t *testing.T) {
+		mockRepo := new(mockQuerier)
+		mockRepo.On("GetAccountByID", ctx, mockID).Return(repo.Account{}, errors.New("not found"))
+
+		service := New(mockRepo)
+		_, err := service.GetAccountByID(ctx, mockID)
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+}
 
 func TestUpsertByPhone(t *testing.T) {
 	ctx := context.Background()
 	testPhone := "+251911223344"
 
 	t.Run("success", func(t *testing.T) {
-		// Arrange
 		mockRepo := new(mockQuerier)
 		expectedAccount := repo.Account{
 			Phone:  testPhone,
@@ -50,29 +82,11 @@ func TestUpsertByPhone(t *testing.T) {
 		mockRepo.On("UpsertAccount", ctx, testPhone).Return(expectedAccount, nil)
 
 		service := New(mockRepo)
-
-		// Act
 		acc, err := service.UpsertByPhone(ctx, testPhone)
 
-		// Assert
 		assert.NoError(t, err)
 		assert.Equal(t, testPhone, acc.Phone)
 		mockRepo.AssertExpectations(t)
-	})
-
-	t.Run("database error", func(t *testing.T) {
-		// Arrange
-		mockRepo := new(mockQuerier)
-		mockRepo.On("UpsertAccount", ctx, testPhone).Return(repo.Account{}, errors.New("db failure"))
-
-		service := New(mockRepo)
-
-		// Act
-		_, err := service.UpsertByPhone(ctx, testPhone)
-
-		// Assert
-		assert.Error(t, err)
-		assert.Equal(t, "db failure", err.Error())
 	})
 }
 

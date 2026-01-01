@@ -9,6 +9,7 @@ import (
 
 // Service defines the exported behavior of the account module
 type Service interface {
+	GetAccountByID(ctx context.Context, id pgtype.UUID) (repo.Account, error)
 	GetAccountByPhone(ctx context.Context, phone string) (repo.Account, error)
 	UpdateAccountStatus(ctx context.Context, id pgtype.UUID, status repo.AccountStatus) error
 	UpsertByPhone(ctx context.Context, phone string) (repo.Account, error)
@@ -23,6 +24,10 @@ func New(repo repo.Querier) Service {
 	return &svc{
 		repo: repo,
 	}
+}
+
+func (s *svc) GetAccountByID(ctx context.Context, id pgtype.UUID) (repo.Account, error) {
+	return s.repo.GetAccountByID(ctx, id)
 }
 
 func (s *svc) GetAccountByPhone(ctx context.Context, phone string) (repo.Account, error) {
