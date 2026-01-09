@@ -67,7 +67,7 @@ func (h *handler) SendOTP(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Println("SendOTP handler invoked")
 	// 1. Decode JSON
-	if err := json.Decode(r, &req); err != nil {
+	if err := json.Read(r, &req); err != nil {
 		h.logger.Error("failed to decode request", "error", err)
 		json.WriteError(w, http.StatusBadRequest, constants.ErrInvalidJSON)
 		return
@@ -153,7 +153,7 @@ func (h *handler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 	var req verifyOTPRequest
 
 	// 1. Decode and Validate Request
-	if err := json.Decode(r, &req); err != nil {
+	if err := json.Read(r, &req); err != nil {
 		json.WriteError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
@@ -227,7 +227,7 @@ func (h *handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 		RefreshToken string `json:"refresh_token" validate:"required"`
 	}
 
-	if err := json.Decode(r, &req); err != nil {
+	if err := json.Read(r, &req); err != nil {
 		json.WriteError(w, http.StatusBadRequest, constants.ErrInvalidJSON)
 		return
 	}
@@ -295,7 +295,7 @@ func (h *handler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 // @Description  Returns the profile of the currently authenticated user
 // @Tags         accounts
 // @Security     BearerAuth
-// @Success      200  {object}  accountDTO
+// @Success      200  {object}  AccountDTO
 // @Router       /api/v1/accounts/me [get]
 func (h *handler) GetMe(w http.ResponseWriter, r *http.Request) {
 	// 1. Get the ID stored in the context by the middleware

@@ -33,23 +33,22 @@ type authSuccessResponse struct {
 	Message      string     `json:"message" example:"OTP verified successfully"`
 	AccessToken  string     `json:"access_token" example:"eyJhbGciOiJIUzI1Ni..."`
 	RefreshToken string     `json:"refresh_token" example:"eyJhbGciOiJIUzI1Ni..."`
-	Account      accountDTO `json:"account"`
+	Account      AccountDTO `json:"account"`
 }
 
-// accountDTO represents the public-facing account profile
+// AccountDTO represents the public-facing account profile
 // @Name AccountDTO
-type accountDTO struct {
-	ID             string    `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
-	Phone          string    `json:"phone" example:"+251911223344"`
-	Status         string    `json:"status" example:"active"`
-	TokenValidFrom time.Time `json:"token_valid_from" example:"2023-10-27T10:00:00Z"` // Changed to time.Time
-	UpdatedAt      string    `json:"updated_at" example:"2023-10-27T10:00:00Z"`
-	CreatedAt      string    `json:"created_at" example:"2023-10-27T10:00:00Z"`
+type AccountDTO struct {
+	ID        string `json:"id" example:"550e8400-e29b-41d4-a716-446655440000"`
+	Phone     string `json:"phone" example:"+251911223344"`
+	Status    string `json:"status" example:"active"`
+	UpdatedAt string `json:"updated_at" example:"2023-10-27T10:00:00Z"`
+	CreatedAt string `json:"created_at" example:"2023-10-27T10:00:00Z"`
 }
 
 // MapAccountRow translates the database record into a clean API response
-func MapAccountRow(u repo.Account) accountDTO {
-	return accountDTO{
+func MapAccountRow(u repo.Account) AccountDTO {
+	return AccountDTO{
 		ID:        u.ID.String(),
 		Phone:     u.Phone,
 		Status:    string(u.Status),

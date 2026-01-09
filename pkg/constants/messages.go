@@ -19,7 +19,7 @@ const (
 
 	ErrAccountSuspended    = "Your account has been suspended"
 	ErrAccountNotFound     = "Account not found"
-	ErrNotAuthorized       = "Not authorized"
+	ErrUnauthorizedError       = "Not authorized"
 	ErrServiceUnavailable  = "Service unavailable"
 	ErrInternalServerError = "Internal server error"
 )

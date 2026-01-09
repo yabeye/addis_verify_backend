@@ -12,7 +12,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/yabeye/addis_verify_backend/internal/account"
 	repo "github.com/yabeye/addis_verify_backend/internal/database"
+	"github.com/yabeye/addis_verify_backend/internal/media"
 	"github.com/yabeye/addis_verify_backend/internal/middlewares"
+	"github.com/yabeye/addis_verify_backend/internal/users"
 	"github.com/yabeye/addis_verify_backend/pkg/auth"
 	"github.com/yabeye/addis_verify_backend/pkg/messenger"
 
@@ -32,13 +34,12 @@ type config struct {
 }
 
 type application struct {
-	config     config
-	db         *pgxpool.Pool
-	cache      *redis.Client
-	logger     *slog.Logger
-	messenger  messenger.Provider
-	auth       auth.TokenManager
-	accountSvc account.Service
+	config    config
+	db        *pgxpool.Pool
+	cache     *redis.Client
+	logger    *slog.Logger
+	messenger messenger.Provider
+	auth      auth.TokenManager
 }
 
 func (app *application) run(handler http.Handler) error {
@@ -95,6 +96,10 @@ func (app *application) mount() http.Handler {
 	// Compresses large JSON responses (Level 5) to save bandwidth.
 	r.Use(middleware.Compress(5))
 
+	// storage
+	fileServer := http.FileServer(http.Dir("./store/media"))
+	r.Handle("/store/media/*", http.StripPrefix("/store/media/", fileServer))
+
 	// Swagger Route
 	r.Get("/swagger/*", httpSwagger.Handler())
 
@@ -104,10 +109,9 @@ func (app *application) mount() http.Handler {
 	// ALL APIS //
 	queries := repo.New(app.db)
 
-	// accountSvc := account.New(queries)
-	app.accountSvc = account.New(queries)
+	accountSvc := account.New(queries)
 	accountHandler := account.NewHandler(
-		app.accountSvc,
+		accountSvc,
 		app.logger.With("handler", "accounts"),
 		app.cache,
 		app.messenger,
@@ -115,9 +119,13 @@ func (app *application) mount() http.Handler {
 		app.config.HashPepper,
 	)
 
+	userSvc := users.New(queries)
+	mediaSvc := media.NewService("store/media", "http://localhost:8080")
+	usersHandler := users.NewHandler(userSvc, mediaSvc, app.logger.With("handler", "users"))
+
 	r.Route("/api/v1", func(r chi.Router) {
 		// This mounts Auth (with 10KB limit), Users, and Links from internal/routes
-		r.Mount("/", MountRoutes(app, accountHandler))
+		r.Mount("/", MountRoutes(app, accountHandler, usersHandler))
 	})
 
 	return r

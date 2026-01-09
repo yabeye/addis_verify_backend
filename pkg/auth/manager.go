@@ -49,7 +49,7 @@ func (m *jwtManager) GenerateTokenPair(accountID string, iat time.Time) (*TokenD
 
 	// 1. Set Expiry Times
 	// Access Token: 15 minutes (Short-lived for security)
-	td.AtExpires = time.Now().Add(time.Minute * 15).Unix()
+	td.AtExpires = time.Now().Add(time.Hour * 15).Unix() //TODO: temporary bring it back to minute 
 	// Refresh Token: 7 days (Long-lived for UX)
 	td.RtExpires = time.Now().Add(time.Hour * 24 * 7).Unix()
 

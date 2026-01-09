@@ -13,13 +13,22 @@ import (
 type Querier interface {
 	GetAccountByID(ctx context.Context, id pgtype.UUID) (Account, error)
 	GetAccountByPhone(ctx context.Context, phone string) (Account, error)
+	//**** USERS & ADDRESS ****
+	// Retrieves the full user profile along with their primary address via JOIN.
+	GetUserWithAddressByAccountID(ctx context.Context, accountID pgtype.UUID) (GetUserWithAddressByAccountIDRow, error)
 	// This is for administrative or system changes.
 	// It does NOT touch token_valid_from, so the user stays logged in.
 	UpdateAccountStatus(ctx context.Context, arg UpdateAccountStatusParams) error
+	// Specifically for updating document or profile images.
+	UpdateUserImages(ctx context.Context, arg UpdateUserImagesParams) error
 	//**** ACCOUNTS ****
 	// This is used ONLY during the VerifyOTP flow.
 	// It moves the 'token_valid_from' forward to invalidate old sessions.
 	UpsertAccount(ctx context.Context, phone string) (Account, error)
+	// Creates or updates the address linked to an account.
+	UpsertAddress(ctx context.Context, arg UpsertAddressParams) (Address, error)
+	// Creates or updates the user profile linked to an account.
+	UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error)
 }
 
 var _ Querier = (*Queries)(nil)

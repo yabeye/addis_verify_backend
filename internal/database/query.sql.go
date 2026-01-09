@@ -47,6 +47,69 @@ func (q *Queries) GetAccountByPhone(ctx context.Context, phone string) (Account,
 	return i, err
 }
 
+const getUserWithAddressByAccountID = `-- name: GetUserWithAddressByAccountID :one
+
+SELECT 
+    u.id as user_id, u.first_name, u.middle_name, u.last_name, u.alias_name, 
+    u.birthdate, u.gender, u.citizenship, u.email, 
+    u.user_head_shot_image, u.government_id_image, u.passport_image,
+    a.id as address_id, a.country, a.region, a.city, a.zone, a.wereda, a.kebele
+FROM users u
+LEFT JOIN address a ON u.account_id = a.account_id
+WHERE u.account_id = $1 LIMIT 1
+`
+
+type GetUserWithAddressByAccountIDRow struct {
+	UserID            pgtype.UUID `json:"user_id"`
+	FirstName         string      `json:"first_name"`
+	MiddleName        pgtype.Text `json:"middle_name"`
+	LastName          string      `json:"last_name"`
+	AliasName         pgtype.Text `json:"alias_name"`
+	Birthdate         pgtype.Date `json:"birthdate"`
+	Gender            pgtype.Text `json:"gender"`
+	Citizenship       pgtype.Text `json:"citizenship"`
+	Email             pgtype.Text `json:"email"`
+	UserHeadShotImage pgtype.Text `json:"user_head_shot_image"`
+	GovernmentIDImage pgtype.Text `json:"government_id_image"`
+	PassportImage     pgtype.Text `json:"passport_image"`
+	AddressID         pgtype.UUID `json:"address_id"`
+	Country           pgtype.Text `json:"country"`
+	Region            pgtype.Text `json:"region"`
+	City              pgtype.Text `json:"city"`
+	Zone              pgtype.Text `json:"zone"`
+	Wereda            pgtype.Text `json:"wereda"`
+	Kebele            pgtype.Text `json:"kebele"`
+}
+
+// **** USERS & ADDRESS ****
+// Retrieves the full user profile along with their primary address via JOIN.
+func (q *Queries) GetUserWithAddressByAccountID(ctx context.Context, accountID pgtype.UUID) (GetUserWithAddressByAccountIDRow, error) {
+	row := q.db.QueryRow(ctx, getUserWithAddressByAccountID, accountID)
+	var i GetUserWithAddressByAccountIDRow
+	err := row.Scan(
+		&i.UserID,
+		&i.FirstName,
+		&i.MiddleName,
+		&i.LastName,
+		&i.AliasName,
+		&i.Birthdate,
+		&i.Gender,
+		&i.Citizenship,
+		&i.Email,
+		&i.UserHeadShotImage,
+		&i.GovernmentIDImage,
+		&i.PassportImage,
+		&i.AddressID,
+		&i.Country,
+		&i.Region,
+		&i.City,
+		&i.Zone,
+		&i.Wereda,
+		&i.Kebele,
+	)
+	return i, err
+}
+
 const updateAccountStatus = `-- name: UpdateAccountStatus :exec
 UPDATE accounts 
 SET status = $2, updated_at = CURRENT_TIMESTAMP 
@@ -62,6 +125,34 @@ type UpdateAccountStatusParams struct {
 // It does NOT touch token_valid_from, so the user stays logged in.
 func (q *Queries) UpdateAccountStatus(ctx context.Context, arg UpdateAccountStatusParams) error {
 	_, err := q.db.Exec(ctx, updateAccountStatus, arg.ID, arg.Status)
+	return err
+}
+
+const updateUserImages = `-- name: UpdateUserImages :exec
+UPDATE users 
+SET 
+    user_head_shot_image = COALESCE($2, user_head_shot_image),
+    government_id_image = COALESCE($3, government_id_image),
+    passport_image = COALESCE($4, passport_image),
+    updated_at = CURRENT_TIMESTAMP
+WHERE account_id = $1
+`
+
+type UpdateUserImagesParams struct {
+	AccountID         pgtype.UUID `json:"account_id"`
+	UserHeadShotImage pgtype.Text `json:"user_head_shot_image"`
+	GovernmentIDImage pgtype.Text `json:"government_id_image"`
+	PassportImage     pgtype.Text `json:"passport_image"`
+}
+
+// Specifically for updating document or profile images.
+func (q *Queries) UpdateUserImages(ctx context.Context, arg UpdateUserImagesParams) error {
+	_, err := q.db.Exec(ctx, updateUserImages,
+		arg.AccountID,
+		arg.UserHeadShotImage,
+		arg.GovernmentIDImage,
+		arg.PassportImage,
+	)
 	return err
 }
 
@@ -87,6 +178,138 @@ func (q *Queries) UpsertAccount(ctx context.Context, phone string) (Account, err
 		&i.Phone,
 		&i.Status,
 		&i.TokenValidFrom,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertAddress = `-- name: UpsertAddress :one
+INSERT INTO address (
+    account_id, country, region, city, zone, wereda, kebele
+) VALUES ($1, $2, $3, $4, $5, $6, $7)
+ON CONFLICT (account_id) DO UPDATE SET
+    country = COALESCE(NULLIF(EXCLUDED.country, ''), address.country),
+    region  = COALESCE(NULLIF(EXCLUDED.region, ''), address.region),
+    city    = COALESCE(NULLIF(EXCLUDED.city, ''), address.city),
+    zone    = COALESCE(NULLIF(EXCLUDED.zone, ''), address.zone),
+    wereda  = COALESCE(NULLIF(EXCLUDED.wereda, ''), address.wereda),
+    kebele  = COALESCE(NULLIF(EXCLUDED.kebele, ''), address.kebele),
+    updated_at = CURRENT_TIMESTAMP
+RETURNING id, account_id, country, region, city, zone, wereda, kebele, created_at, updated_at
+`
+
+type UpsertAddressParams struct {
+	AccountID pgtype.UUID `json:"account_id"`
+	Country   string      `json:"country"`
+	Region    pgtype.Text `json:"region"`
+	City      pgtype.Text `json:"city"`
+	Zone      pgtype.Text `json:"zone"`
+	Wereda    pgtype.Text `json:"wereda"`
+	Kebele    pgtype.Text `json:"kebele"`
+}
+
+// Creates or updates the address linked to an account.
+func (q *Queries) UpsertAddress(ctx context.Context, arg UpsertAddressParams) (Address, error) {
+	row := q.db.QueryRow(ctx, upsertAddress,
+		arg.AccountID,
+		arg.Country,
+		arg.Region,
+		arg.City,
+		arg.Zone,
+		arg.Wereda,
+		arg.Kebele,
+	)
+	var i Address
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Country,
+		&i.Region,
+		&i.City,
+		&i.Zone,
+		&i.Wereda,
+		&i.Kebele,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertUser = `-- name: UpsertUser :one
+INSERT INTO users (
+    account_id, first_name, middle_name, last_name, alias_name, 
+    birthdate, gender, citizenship, email, 
+    user_head_shot_image, government_id_image, passport_image
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+ON CONFLICT (account_id) DO UPDATE SET
+    -- Text fields protected: if EXCLUDED is '', keep the current value
+    first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), users.first_name),
+    middle_name = COALESCE(NULLIF(EXCLUDED.middle_name, ''), users.middle_name),
+    last_name = COALESCE(NULLIF(EXCLUDED.last_name, ''), users.last_name),
+    alias_name = COALESCE(NULLIF(EXCLUDED.alias_name, ''), users.alias_name),
+    
+    -- Date and Choice fields protected:
+    birthdate = COALESCE(EXCLUDED.birthdate, users.birthdate),
+    gender = COALESCE(NULLIF(EXCLUDED.gender, ''), users.gender),
+    citizenship = COALESCE(NULLIF(EXCLUDED.citizenship, ''), users.citizenship),
+    email = COALESCE(NULLIF(EXCLUDED.email, ''), users.email),
+    
+    -- Image fields (already protected in your previous version)
+    user_head_shot_image = COALESCE(NULLIF(EXCLUDED.user_head_shot_image, ''), users.user_head_shot_image),
+    government_id_image = COALESCE(NULLIF(EXCLUDED.government_id_image, ''), users.government_id_image),
+    passport_image = COALESCE(NULLIF(EXCLUDED.passport_image, ''), users.passport_image),
+    
+    updated_at = CURRENT_TIMESTAMP
+RETURNING id, account_id, first_name, middle_name, last_name, alias_name, birthdate, gender, citizenship, email, user_head_shot_image, government_id_image, passport_image, created_at, updated_at
+`
+
+type UpsertUserParams struct {
+	AccountID         pgtype.UUID `json:"account_id"`
+	FirstName         string      `json:"first_name"`
+	MiddleName        pgtype.Text `json:"middle_name"`
+	LastName          string      `json:"last_name"`
+	AliasName         pgtype.Text `json:"alias_name"`
+	Birthdate         pgtype.Date `json:"birthdate"`
+	Gender            pgtype.Text `json:"gender"`
+	Citizenship       pgtype.Text `json:"citizenship"`
+	Email             pgtype.Text `json:"email"`
+	UserHeadShotImage pgtype.Text `json:"user_head_shot_image"`
+	GovernmentIDImage pgtype.Text `json:"government_id_image"`
+	PassportImage     pgtype.Text `json:"passport_image"`
+}
+
+// Creates or updates the user profile linked to an account.
+func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, upsertUser,
+		arg.AccountID,
+		arg.FirstName,
+		arg.MiddleName,
+		arg.LastName,
+		arg.AliasName,
+		arg.Birthdate,
+		arg.Gender,
+		arg.Citizenship,
+		arg.Email,
+		arg.UserHeadShotImage,
+		arg.GovernmentIDImage,
+		arg.PassportImage,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.FirstName,
+		&i.MiddleName,
+		&i.LastName,
+		&i.AliasName,
+		&i.Birthdate,
+		&i.Gender,
+		&i.Citizenship,
+		&i.Email,
+		&i.UserHeadShotImage,
+		&i.GovernmentIDImage,
+		&i.PassportImage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

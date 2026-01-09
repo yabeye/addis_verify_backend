@@ -63,3 +63,34 @@ type Account struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
+
+type Address struct {
+	ID        pgtype.UUID        `json:"id"`
+	AccountID pgtype.UUID        `json:"account_id"`
+	Country   string             `json:"country"`
+	Region    pgtype.Text        `json:"region"`
+	City      pgtype.Text        `json:"city"`
+	Zone      pgtype.Text        `json:"zone"`
+	Wereda    pgtype.Text        `json:"wereda"`
+	Kebele    pgtype.Text        `json:"kebele"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+}
+
+type User struct {
+	ID                pgtype.UUID        `json:"id"`
+	AccountID         pgtype.UUID        `json:"account_id"`
+	FirstName         string             `json:"first_name"`
+	MiddleName        pgtype.Text        `json:"middle_name"`
+	LastName          string             `json:"last_name"`
+	AliasName         pgtype.Text        `json:"alias_name"`
+	Birthdate         pgtype.Date        `json:"birthdate"`
+	Gender            pgtype.Text        `json:"gender"`
+	Citizenship       pgtype.Text        `json:"citizenship"`
+	Email             pgtype.Text        `json:"email"`
+	UserHeadShotImage pgtype.Text        `json:"user_head_shot_image"`
+	GovernmentIDImage pgtype.Text        `json:"government_id_image"`
+	PassportImage     pgtype.Text        `json:"passport_image"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
