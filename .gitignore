@@ -41,3 +41,5 @@ docs/
 # Do NOT ignore your generated SQLC code (internal/db/*.go)
 # But DO ignore any local data folders if you run DBs in volumes
 postgres-data/
+
+store/
